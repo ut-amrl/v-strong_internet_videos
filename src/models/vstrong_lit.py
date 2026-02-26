@@ -110,7 +110,7 @@ class VStrongLit(pl.LightningModule):
       - Frozen SAM image encoder provides dense features.
       - 1x1 conv projection head learns a contrastive embedding.
       - Supervised contrastive loss clusters pos points and neg points.
-      - Visualization: cosine similarity to per-image pos prototype.
+      - Visualization: cosine similarity to a traversability reference vector.
     """
 
     def __init__(
@@ -123,6 +123,7 @@ class VStrongLit(pl.LightningModule):
         temperature: float = 0.1,
         lr: float = 1e-3,
         weight_decay: float = 1e-4,
+        traversability_ema_alpha: float = 0.999,
         log_images_every_n_steps: int = 200,
     ):
         super().__init__()
@@ -132,6 +133,7 @@ class VStrongLit(pl.LightningModule):
         self.temperature = float(temperature)
         self.lr = float(lr)
         self.weight_decay = float(weight_decay)
+        self.traversability_ema_alpha = float(traversability_ema_alpha)
         self.log_images_every_n_steps = int(log_images_every_n_steps)
 
         sam = sam_model_registry[sam_type](checkpoint=sam_checkpoint)
@@ -147,6 +149,8 @@ class VStrongLit(pl.LightningModule):
             nn.ReLU(inplace=True),
             nn.Conv2d(int(proj_hidden), int(embed_dim), kernel_size=1),
         )
+        self.register_buffer("traversability_vector", torch.zeros(int(embed_dim), dtype=torch.float32))
+        self.register_buffer("traversability_initialized", torch.tensor(False, dtype=torch.bool))
 
     def configure_optimizers(self):
         return torch.optim.AdamW(
@@ -186,15 +190,38 @@ class VStrongLit(pl.LightningModule):
             return None
 
         z_map = F.normalize(z_map, dim=0)
-        hm, wm = z_map.shape[1], z_map.shape[2]
         pos_points_b = pos_points.unsqueeze(0)  # 1xKx2
         z_pos = sample_from_feature_map(z_map.unsqueeze(0), pos_points_b, sam_img_size=self.sam_img_size)[0]  # KxD
         z_pos = F.normalize(z_pos, dim=1)
         proto = z_pos.mean(dim=0)
-        proto = F.normalize(proto, dim=0)
+        return self._make_viz_from_reference_vectors(
+            resized_rgb=resized_rgb,
+            z_map=z_map,
+            pos_proto=proto,
+            neg_proto=None,
+        )
 
-        score = (z_map.permute(1, 2, 0) * proto).sum(dim=-1)  # Hm x Wm in [-1,1]
-        score = score.unsqueeze(0).unsqueeze(0)  # 1x1xHm xWm
+    def _score_map_from_reference_vectors(
+        self,
+        z_map: torch.Tensor,  # (D,Hm,Wm)
+        pos_proto: torch.Tensor,  # (D,)
+        neg_proto: torch.Tensor | None = None,  # (D,)
+    ) -> torch.Tensor:
+        z_map = F.normalize(z_map, dim=0)
+        pos_proto = F.normalize(pos_proto, dim=0)
+        score = (z_map.permute(1, 2, 0) * pos_proto).sum(dim=-1)  # Hm x Wm
+        if neg_proto is not None and int(neg_proto.numel()) > 0:
+            neg_proto = F.normalize(neg_proto, dim=0)
+            score_neg = (z_map.permute(1, 2, 0) * neg_proto).sum(dim=-1)
+            score = score - score_neg
+        return score
+
+    def _make_viz_from_score(
+        self,
+        resized_rgb: np.ndarray,
+        score_hw: torch.Tensor,  # (Hm,Wm)
+    ) -> VStrongViz:
+        score = score_hw.unsqueeze(0).unsqueeze(0)  # 1x1xHm xWm
 
         # z_map lives on SAM's padded 1024x1024 canvas (feature map 64x64).
         # For visualization, upsample to the full padded canvas, then crop
@@ -216,6 +243,34 @@ class VStrongLit(pl.LightningModule):
         rgb_bgr = cv2.cvtColor(resized_rgb, cv2.COLOR_RGB2BGR)
         overlay = (0.6 * rgb_bgr + 0.4 * heat_bgr).astype(np.uint8)
         return VStrongViz(rgb=resized_rgb, heatmap_bgr=heat_bgr, overlay_bgr=overlay)
+
+    def _make_viz_from_reference_vectors(
+        self,
+        resized_rgb: np.ndarray,
+        z_map: torch.Tensor,  # (D,Hm,Wm)
+        pos_proto: torch.Tensor,  # (D,)
+        neg_proto: torch.Tensor | None = None,  # (D,)
+    ) -> VStrongViz:
+        score = self._score_map_from_reference_vectors(
+            z_map=z_map,
+            pos_proto=pos_proto,
+            neg_proto=neg_proto,
+        )
+        return self._make_viz_from_score(resized_rgb=resized_rgb, score_hw=score)
+
+    def _make_viz_with_traversability_vector(
+        self,
+        resized_rgb: np.ndarray,
+        z_map: torch.Tensor,  # (D,Hm,Wm)
+    ) -> VStrongViz:
+        if (not bool(self.traversability_initialized.item())) or int(self.traversability_vector.numel()) == 0:
+            raise RuntimeError("traversability vector is not initialized")
+        return self._make_viz_from_reference_vectors(
+            resized_rgb=resized_rgb,
+            z_map=z_map,
+            pos_proto=self.traversability_vector,
+            neg_proto=None,
+        )
 
     def _log_viz(self, tag: str, viz: VStrongViz):
         # TensorBoard
@@ -253,6 +308,22 @@ class VStrongLit(pl.LightningModule):
 
         z_pos = sample_from_feature_map(z_map, pos_xy, sam_img_size=self.sam_img_size)  # BxKxD
         z_neg = sample_from_feature_map(z_map, neg_xy, sam_img_size=self.sam_img_size)  # BxKxD
+
+        if stage == "train":
+            with torch.no_grad():
+                _, _, d = z_pos.shape
+                pos_flat = z_pos.detach().reshape(-1, d)
+                pos_flat = F.normalize(pos_flat, dim=1)
+                pos_mean = F.normalize(pos_flat.mean(dim=0), dim=0)
+
+                if bool(self.traversability_initialized.item()):
+                    z_prev = F.normalize(self.traversability_vector.detach(), dim=0)
+                    z_new = (self.traversability_ema_alpha * z_prev) + ((1.0 - self.traversability_ema_alpha) * pos_mean)
+                else:
+                    z_new = pos_mean
+                z_new = F.normalize(z_new, dim=0)
+                self.traversability_vector.copy_(z_new)
+                self.traversability_initialized.fill_(True)
 
         b, k, d = z_pos.shape
         z_all = torch.cat([z_pos, z_neg], dim=1).reshape(b * (2 * k), d)

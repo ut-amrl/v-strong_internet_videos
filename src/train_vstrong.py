@@ -11,6 +11,19 @@ from data.vstrong_dataset import VStrongDataset, vstrong_collate
 from models.vstrong_lit import VStrongLit
 
 
+def _parse_devices_arg(devices_arg: str):
+    s = str(devices_arg).strip()
+    if s.lower() == "auto":
+        return "auto"
+    if s.isdigit():
+        return int(s)
+    if "," in s:
+        parts = [p.strip() for p in s.split(",") if p.strip()]
+        if all(p.isdigit() for p in parts):
+            return [int(p) for p in parts]
+    return s
+
+
 def main():
     parser = argparse.ArgumentParser(description="Train V-STRONG (contrastive) from SAM + pos/neg points.")
     parser.add_argument("--dataset_dir", type=str, required=True, help="Dataset directory (e.g. data/output_2)")
@@ -31,6 +44,7 @@ def main():
     parser.add_argument("--embed_dim", type=int, default=64)
     parser.add_argument("--proj_hidden", type=int, default=256)
     parser.add_argument("--temperature", type=float, default=0.1)
+    parser.add_argument("--traversability_ema_alpha", type=float, default=0.999)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--weight_decay", type=float, default=1e-4)
 
@@ -38,6 +52,8 @@ def main():
     parser.add_argument("--precision", type=str, default="32-true")
     parser.add_argument("--accelerator", type=str, default="auto")
     parser.add_argument("--devices", type=str, default="auto")
+    parser.add_argument("--strategy", type=str, default="auto")
+    parser.add_argument("--num_nodes", type=int, default=1)
     parser.add_argument("--log_every_n_steps", type=int, default=10)
     parser.add_argument("--log_images_every_n_steps", type=int, default=200)
     parser.add_argument("--limit_train_batches", type=float, default=1.0)
@@ -119,6 +135,7 @@ def main():
         embed_dim=args.embed_dim,
         proj_hidden=args.proj_hidden,
         temperature=args.temperature,
+        traversability_ema_alpha=args.traversability_ema_alpha,
         lr=args.lr,
         weight_decay=args.weight_decay,
         log_images_every_n_steps=args.log_images_every_n_steps,
@@ -133,11 +150,16 @@ def main():
         mode="min",
         save_last=True,
         save_top_k=1,
+        enable_version_counter=False,
     )
+
+    devices = _parse_devices_arg(args.devices)
 
     trainer = pl.Trainer(
         accelerator=args.accelerator,
-        devices=args.devices,
+        devices=devices,
+        strategy=args.strategy,
+        num_nodes=args.num_nodes,
         precision=args.precision,
         max_epochs=args.max_epochs,
         logger=loggers,

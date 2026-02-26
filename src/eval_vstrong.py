@@ -52,7 +52,7 @@ def main():
         sample_margin_px=args.sample_margin_px,
     )
 
-    model = VStrongLit.load_from_checkpoint(str(ckpt_path))
+    model = VStrongLit.load_from_checkpoint(str(ckpt_path), strict=False)
     model.eval()
 
     if args.device is not None:
@@ -92,4 +92,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

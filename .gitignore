@@ -3,3 +3,5 @@
 **/logs
 **/videos
 **/checkpoints
+**/*.mp4
+**/__pycache__

@@ -26,19 +26,60 @@ conda run -n env_isaaclab python -u src/data/generate_dataset.py \
 ```
 
 ## 2) Train (contrastive)
+Training is now config-driven. The canonical entrypoint is:
 ```bash
-conda run -n env_isaaclab python -u src/train_vstrong.py \
-  --dataset_dir data/output_2 \
-  --sam_checkpoint checkpoints/sam_vit_b_01ec64.pth \
-  --sam_type vit_b \
-  --points_per_class 64 \
-  --points_source mixed \
-  --batch_size 1 \
-  --num_workers 0 \
-  --max_epochs 5 \
-  --wandb_mode disabled
+conda run -n env_isaaclab python -u train.py --config configs/sam_small.yaml
 ```
-Checkpoints go to `logs/checkpoints/vstrong/` (including `logs/checkpoints/vstrong/last.ckpt`).
+
+Example configs are provided:
+- `configs/sam_small.yaml`
+- `configs/sam_small_unfrozen.yaml`
+- `configs/nanosam_small.yaml`
+- `configs/dino_small.yaml`
+- `configs/dino_small_unfrozen.yaml`
+- `configs/dinov2_large.yaml`
+
+To pre-download local DINO-family checkpoints:
+```bash
+bash scripts/download_nanosam_weights.sh small
+bash scripts/download_dino_weights.sh small
+bash scripts/download_dinov2_weights.sh large
+```
+
+By default these save to:
+- `checkpoints/nanosam_resnet18.pth`
+- `checkpoints/dino_vits16.pth`
+- `checkpoints/dinov2_vitl14.pth`
+
+Backbone selection lives in the config under `model:`:
+```yaml
+model:
+  backbone: sam      # sam | nanosam | dino | dinov2
+  size: small        # small | medium | large
+  checkpoint: checkpoints/sam_vit_b_01ec64.pth
+  img_size: 1024
+  freeze_backbone: true
+```
+
+The config file is the source of truth for:
+- dataset path
+- backbone family / size
+- optimizer settings
+- trainer settings
+- logging and checkpoint paths
+
+To finetune the encoder instead of freezing it, set:
+```yaml
+model:
+  freeze_backbone: false
+
+optimizer:
+  backbone_lr: 0.0001
+```
+
+For `nanosam`, the current training path uses a ResNet-based frozen image encoder (`small -> resnet18`, `medium -> resnet34`, `large -> resnet50`) initialized from torchvision ImageNet weights or a local checkpoint.
+
+Checkpoints go to the `paths.checkpoint_dir` configured in the YAML (for example `logs/checkpoints/vstrong/`).
 
 ## 3) Inference (input video → output side-by-side MP4)
 There are two modes:

@@ -1,5 +1,4 @@
 import argparse
-import sys
 import time
 from pathlib import Path
 
@@ -8,10 +7,8 @@ import numpy as np
 import torch
 
 from data.extract_frames import extract_frames
+from data.vstrong_dataset import ResizeLongestSide
 from models.vstrong_lit import VStrongLit
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "third_party" / "segment-anything"))
-from segment_anything.utils.transforms import ResizeLongestSide
 
 try:
     from tqdm import tqdm
@@ -89,7 +86,7 @@ def main():
     model.eval()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
-    transform = ResizeLongestSide(model.sam_img_size)
+    transform = ResizeLongestSide(int(getattr(model, "img_size", getattr(model, "sam_img_size", 1024))))
     if not bool(model.traversability_initialized.item()):
         raise RuntimeError(
             "Checkpoint does not contain an initialized traversability vector. "

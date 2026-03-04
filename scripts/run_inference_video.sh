@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+export PYTHONPATH="${PYTHONPATH:-}:$(cd "$(dirname "$0")/.." && pwd)/src"
+
 # Inference convenience script:
 #   input video -> generate dataset -> render side-by-side overlay video
 #

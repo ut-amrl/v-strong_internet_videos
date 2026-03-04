@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+export PYTHONPATH="${PYTHONPATH:-}:$(cd "$(dirname "$0")/.." && pwd)/src"
+
 # Full V-STRONG pipeline:
 #   video -> frames -> breadcrumbs -> SAM masks -> pos/neg points -> train -> eval overlays
 #
@@ -65,24 +67,24 @@ if [[ "${DATASET_DIR}" != data/* ]]; then
   exit 2
 fi
 
-# echo "==> Cleaning dataset dir: ${DATASET_DIR}"
-# rm -rf "${DATASET_DIR}"
+echo "==> Cleaning dataset dir: ${DATASET_DIR}"
+rm -rf "${DATASET_DIR}"
 
-# export CUDA_VISIBLE_DEVICES
+export CUDA_VISIBLE_DEVICES
 
-# echo "==> Generating dataset (frames + breadcrumbs + SAM + pos/neg)"
-# conda run --no-capture-output -n env_isaaclab python -u src/data/generate_dataset.py \
-#   --video "${VIDEO_PATH}" \
-#   --output "${DATASET_DIR}" \
-#   --fps "${FPS}" \
-#   --breadcrumb_max_track_len "${BREADCRUMB_MAX_TRACK_LEN}" \
-#   --checkpoint "${SAM_CKPT}" \
-#   --sam_type "${SAM_TYPE}" \
-#   --prompt_max_points "${PROMPT_MAX_POINTS}" \
-#   --num_pos "${NUM_POS}" \
-#   --num_neg "${NUM_NEG}" \
-#   --neg_top_frac "${NEG_TOP_FRAC}" \
-#   --sample_margin_px "${SAMPLE_MARGIN_PX}"
+echo "==> Generating dataset (frames + SAM masks + pos/neg points)"
+conda run --no-capture-output -n env_isaaclab python -u src/data/generate_dataset.py \
+  --video "${VIDEO_PATH}" \
+  --output "${DATASET_DIR}" \
+  --fps "${FPS}" \
+  --breadcrumb_max_track_len "${BREADCRUMB_MAX_TRACK_LEN}" \
+  --checkpoint "${SAM_CKPT}" \
+  --sam_type "${SAM_TYPE}" \
+  --prompt_max_points "${PROMPT_MAX_POINTS}" \
+  --num_pos "${NUM_POS}" \
+  --num_neg "${NUM_NEG}" \
+  --neg_top_frac "${NEG_TOP_FRAC}" \
+  --sample_margin_px "${SAMPLE_MARGIN_PX}"
 
 echo "==> Training V-STRONG"
 conda run --no-capture-output -n env_isaaclab python -u src/train_vstrong.py \

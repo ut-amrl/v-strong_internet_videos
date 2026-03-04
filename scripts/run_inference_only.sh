@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+export PYTHONPATH="${PYTHONPATH:-}:$(cd "$(dirname "$0")/.." && pwd)/src"
+
 # Image-only inference pipeline:
 #   input video -> extract frames -> V-STRONG image-only overlay video
 #

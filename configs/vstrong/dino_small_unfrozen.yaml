@@ -1,5 +1,9 @@
 data:
-  dataset_dir: data/output_2
+  # One dataset root:
+  # dataset_dir: data/output_2
+  #
+  # Or multiple dataset roots (merged):
+  dataset_dirs: [data/output_2]
   val_ratio: 0.1
   points_per_class: 64
   points_source: mixed

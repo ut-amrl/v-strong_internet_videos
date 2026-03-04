@@ -127,6 +127,28 @@ def _require(value, label: str):
     return value
 
 
+def _normalize_dataset_dirs(data_cfg: dict, legacy_dataset_cfg: dict) -> list[Path]:
+    dataset_dirs_val = data_cfg.get("dataset_dirs")
+    dataset_dir_val = data_cfg.get("dataset_dir", legacy_dataset_cfg.get("dataset_dir"))
+
+    # Allow: dataset_dir: [a,b,c]
+    if dataset_dirs_val is None and isinstance(dataset_dir_val, list):
+        dataset_dirs_val = dataset_dir_val
+
+    # Allow: dataset_dirs: [...] (preferred)
+    if dataset_dirs_val is not None:
+        if not isinstance(dataset_dirs_val, list):
+            raise RuntimeError("data.dataset_dirs must be a list of paths.")
+        dirs = [Path(str(p)) for p in dataset_dirs_val if str(p).strip()]
+        if not dirs:
+            raise RuntimeError("data.dataset_dirs is empty.")
+        return dirs
+
+    # Default: single dir
+    dataset_dir = Path(_require(dataset_dir_val, "data.dataset_dir"))
+    return [dataset_dir]
+
+
 def main(argv: list[str] | None = None):
     parser = argparse.ArgumentParser(description="Train V-STRONG from a YAML config.")
     parser.add_argument("--config", type=str, required=True, help="Path to YAML config file.")
@@ -152,17 +174,13 @@ def main(argv: list[str] | None = None):
         img_size=model_cfg.get("img_size"),
     )
 
-    dataset_dir = Path(
-        _require(
-            data_cfg.get("dataset_dir", legacy_dataset_cfg.get("dataset_dir")),
-            "data.dataset_dir",
-        )
-    )
-    if not dataset_dir.exists():
-        raise RuntimeError(f"dataset_dir does not exist: {dataset_dir}")
+    dataset_dirs = _normalize_dataset_dirs(data_cfg, legacy_dataset_cfg)
+    missing = [p for p in dataset_dirs if not p.exists()]
+    if missing:
+        raise RuntimeError("Some dataset dirs do not exist: " + ", ".join(str(p) for p in missing))
 
     ds_kwargs = dict(
-        dataset_dir=str(dataset_dir),
+        dataset_dir=[str(p) for p in dataset_dirs],
         val_ratio=float(data_cfg.get("val_ratio", legacy_dataset_cfg.get("val_ratio", 0.1))),
         seed=seed,
         img_size=backbone_cfg["img_size"],

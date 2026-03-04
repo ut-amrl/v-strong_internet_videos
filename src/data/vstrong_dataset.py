@@ -43,8 +43,8 @@ class VStrongDataset(Dataset):
 
     Parameters
     ----------
-    dataset_dir : str
-        Root dataset directory (flat or chunked layout).
+    dataset_dir : str | list[str]
+        Root dataset directory (flat or chunked layout), or a list of dataset roots.
     split : str
         ``"train"`` or ``"val"``.
     val_ratio : float
@@ -65,24 +65,36 @@ class VStrongDataset(Dataset):
 
     def __init__(
         self,
-        dataset_dir: str,
+        dataset_dir: str | list[str],
         split: str = "train",
         val_ratio: float = 0.1,
         seed: int = 0,
         sam_img_size: int = 1024,
+        img_size: int | None = None,
         points_per_class: int = 64,
         points_source: str = "mixed",
         neg_top_frac: float = 0.3,
         sample_margin_px: int = 10,
     ):
-        self.dataset_dir = Path(dataset_dir)
+        if isinstance(dataset_dir, (list, tuple)):
+            dataset_dirs = [Path(d) for d in dataset_dir if str(d).strip()]
+        else:
+            dataset_dirs = [Path(str(dataset_dir))]
+        if not dataset_dirs:
+            raise RuntimeError("dataset_dir must be a path or a non-empty list of paths.")
+
+        self.dataset_dirs = dataset_dirs
+        # Backwards-compat: keep a representative dir for error messages.
+        self.dataset_dir = self.dataset_dirs[0]
         self.split = split
-        self.sam_img_size = sam_img_size
+        if img_size is not None:
+            sam_img_size = int(img_size)
+        self.sam_img_size = int(sam_img_size)
         self.points_per_class = points_per_class
         self.points_source = points_source
         self.neg_top_frac = neg_top_frac
         self.sample_margin_px = sample_margin_px
-        self.transform = ResizeLongestSide(sam_img_size)
+        self.transform = ResizeLongestSide(self.sam_img_size)
 
         self.samples = self._discover_samples()
 
@@ -98,13 +110,24 @@ class VStrongDataset(Dataset):
             self.samples = [self.samples[i] for i in range(n) if i not in val_idxs]
 
     def _discover_samples(self) -> list[dict]:
-        """Discover all samples, supporting both flat and chunked layouts."""
-        index_file = self.dataset_dir / "index.jsonl"
-        if index_file.exists():
-            return self._load_from_index(index_file)
-        return self._load_flat()
+        """Discover all samples, supporting both flat and chunked layouts (and multiple roots)."""
+        samples: list[dict] = []
+        for ds_idx, root in enumerate(self.dataset_dirs):
+            index_file = root / "index.jsonl"
+            if index_file.exists():
+                samples.extend(self._load_from_index(root, index_file, dataset_ordinal=ds_idx))
+            else:
+                samples.extend(self._load_flat(root, dataset_ordinal=ds_idx))
+        return samples
 
-    def _load_from_index(self, index_file: Path) -> list[dict]:
+    @staticmethod
+    def _stable_seed_from_path(path: Path) -> int:
+        # Deterministic per-sample seed, avoids collisions when chunk-local frame_idx repeats.
+        import zlib
+
+        return int(zlib.crc32(str(path).encode("utf-8")) & 0xFFFFFFFF)
+
+    def _load_from_index(self, root: Path, index_file: Path, *, dataset_ordinal: int) -> list[dict]:
         """Load sample entries from a chunked index.jsonl."""
         samples = []
         with open(index_file) as f:
@@ -113,26 +136,30 @@ class VStrongDataset(Dataset):
                 if not line:
                     continue
                 entry = json.loads(line)
-                frame_path = self.dataset_dir / entry["frame_path"]
-                mask_path = self.dataset_dir / entry.get("mask_path", "")
-                points_path = self.dataset_dir / entry.get("points_path", "")
+                frame_path = root / entry["frame_path"]
+                mask_path = root / entry.get("mask_path", "")
+                points_path = root / entry.get("points_path", "")
                 if frame_path.exists():
+                    frame_idx = entry.get("frame_idx", 0)
                     samples.append({
                         "frame_path": frame_path,
                         "mask_path": mask_path if mask_path.exists() else None,
                         "points_path": points_path if points_path.exists() else None,
-                        "frame_idx": entry.get("frame_idx", 0),
+                        "frame_idx": frame_idx,
+                        "chunk_id": entry.get("chunk_id", ""),
+                        "seed_key": self._stable_seed_from_path(frame_path),
+                        "dataset_ordinal": int(dataset_ordinal),
                     })
-        return sorted(samples, key=lambda s: s["frame_idx"])
+        return sorted(samples, key=lambda s: (s.get("dataset_ordinal", 0), str(s.get("chunk_id", "")), s["frame_idx"], str(s["frame_path"])))
 
-    def _load_flat(self) -> list[dict]:
+    def _load_flat(self, root: Path, *, dataset_ordinal: int) -> list[dict]:
         """Load samples from flat dataset layout."""
-        frames_dir = self.dataset_dir / "frames"
-        masks_dir = self.dataset_dir / "masks"
-        points_dir = self.dataset_dir / "pos_neg_points"
+        frames_dir = root / "frames"
+        masks_dir = root / "masks"
+        points_dir = root / "pos_neg_points"
 
         if not frames_dir.exists():
-            raise RuntimeError(f"No frames/ dir found in {self.dataset_dir}")
+            raise RuntimeError(f"No frames/ dir found in {root}")
 
         frame_paths = sorted(frames_dir.glob("*.jpg"))
         samples = []
@@ -148,15 +175,18 @@ class VStrongDataset(Dataset):
                 "mask_path": mask_path if mask_path.exists() else None,
                 "points_path": pts_path if pts_path.exists() else None,
                 "frame_idx": idx,
+                "chunk_id": "",
+                "seed_key": self._stable_seed_from_path(fp),
+                "dataset_ordinal": int(dataset_ordinal),
             })
-        return samples
+        return sorted(samples, key=lambda s: (s.get("dataset_ordinal", 0), s["frame_idx"], str(s["frame_path"])))
 
     def __len__(self) -> int:
         return len(self.samples)
 
     def __getitem__(self, idx: int) -> VStrongSample:
         s = self.samples[idx]
-        rng = np.random.default_rng(s["frame_idx"])
+        rng = np.random.default_rng(int(s.get("seed_key", s["frame_idx"])) & 0xFFFFFFFF)
 
         # Load and resize image
         bgr = cv2.imread(str(s["frame_path"]))

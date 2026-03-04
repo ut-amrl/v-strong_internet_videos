@@ -1,0 +1,48 @@
+data:
+  dataset_dir: data/output_2
+  val_ratio: 0.1
+  seed: 0
+
+teacher:
+  sam_variant: vit_h
+  checkpoint: checkpoints/sam_vit_h_4b8939.pth
+  img_size: 1024
+
+student:
+  variant: resnet101      # resnet18 | resnet34 | resnet50 | resnet101
+  pretrained: true
+
+optimizer:
+  lr: 0.0001
+  weight_decay: 0.0001
+  lambda_mse: 1.0
+  lambda_cos: 0.5
+
+trainer:
+  seed: 0
+  batch_size: 2
+  num_workers: 4
+  accelerator: auto
+  devices: [0]
+  strategy: auto
+  num_nodes: 1
+  precision: 16-mixed
+  max_epochs: 20
+  limit_train_batches: 1.0
+  limit_val_batches: 1.0
+  fast_dev_run: false
+
+logging:
+  tensorboard_enabled: true
+  tensorboard_name: tensorboard
+  tensorboard_version: distill_resnet101_samH
+  wandb_mode: disabled
+  wandb_project: vstrong
+  wandb_name:
+  log_every_n_steps: 10
+
+paths:
+  logs_dir: logs/distill
+  checkpoint_dir: logs/distill/checkpoints/resnet101_samH
+  default_root_dir: logs/distill
+  export_path: checkpoints/distilled_resnet101_samH.pth

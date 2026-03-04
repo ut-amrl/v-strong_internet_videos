@@ -13,9 +13,11 @@ from torchvision.models import (
     ResNet18_Weights,
     ResNet34_Weights,
     ResNet50_Weights,
+    ResNet101_Weights,
     resnet18,
     resnet34,
     resnet50,
+    resnet101,
 )
 
 
@@ -28,6 +30,8 @@ _SIZE_ALIASES = {
     "medium": "medium",
     "l": "large",
     "large": "large",
+    "xl": "xlarge",
+    "xlarge": "xlarge",
 }
 
 _BACKBONE_SPECS = {
@@ -45,6 +49,7 @@ _BACKBONE_SPECS = {
             "small": "resnet18",
             "medium": "resnet34",
             "large": "resnet50",
+            "xlarge": "resnet101",
         },
     },
     "dino": {
@@ -80,9 +85,10 @@ _DINOV2_VARIANTS = {
 }
 
 _NANOSAM_VARIANTS = {
-    "resnet18": {"builder": resnet18, "weights": ResNet18_Weights.IMAGENET1K_V1, "embed_dim": 512},
-    "resnet34": {"builder": resnet34, "weights": ResNet34_Weights.IMAGENET1K_V1, "embed_dim": 512},
-    "resnet50": {"builder": resnet50, "weights": ResNet50_Weights.IMAGENET1K_V2, "embed_dim": 2048},
+    "resnet18":  {"builder": resnet18,  "weights": ResNet18_Weights.IMAGENET1K_V1,  "embed_dim": 512},
+    "resnet34":  {"builder": resnet34,  "weights": ResNet34_Weights.IMAGENET1K_V1,  "embed_dim": 512},
+    "resnet50":  {"builder": resnet50,  "weights": ResNet50_Weights.IMAGENET1K_V2,  "embed_dim": 2048},
+    "resnet101": {"builder": resnet101, "weights": ResNet101_Weights.IMAGENET1K_V2, "embed_dim": 2048},
 }
 
 
@@ -247,7 +253,9 @@ class NanoSAMBackbone(BaseBackbone):
         else:
             ckpt_path = Path(checkpoint)
             if not ckpt_path.exists():
-                raise RuntimeError(f"backbone_checkpoint does not exist: {checkpoint}")
+                import os
+                cwd = os.getcwd()
+                raise RuntimeError(f"backbone_checkpoint does not exist: {checkpoint}. CWD={cwd}, Absolute={ckpt_path.absolute()}")
             backbone_model = info["builder"](weights=None)
             payload = torch.load(str(ckpt_path), map_location="cpu")
             state_dict = _extract_state_dict(payload)
@@ -256,6 +264,8 @@ class NanoSAMBackbone(BaseBackbone):
                 known_prefixes=("image_encoder.", "backbone.", "model.", "encoder."),
             )
             missing, unexpected = backbone_model.load_state_dict(state_dict, strict=False)
+            # fc.* keys are expected to be absent — we never use the classification head.
+            missing = [k for k in missing if not k.startswith("fc.")]
             if missing:
                 missing_str = ", ".join(missing[:5])
                 raise RuntimeError(f"Failed to load NanoSAM checkpoint cleanly. Missing keys: {missing_str}")

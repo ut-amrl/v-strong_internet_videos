@@ -7,10 +7,10 @@ data:
   sample_margin_px: 10
 
 model:
-  backbone: nanosam
+  backbone: dino
   size: small
-  checkpoint: checkpoints/nanosam_resnet18.pth
-  img_size: 1024
+  checkpoint: checkpoints/dino_vits16.pth
+  img_size: 224
   embed_dim: 64
   proj_hidden: 256
   temperature: 0.1
@@ -22,7 +22,7 @@ optimizer:
 
 trainer:
   seed: 0
-  batch_size: 2
+  batch_size: 4
   num_workers: 4
   accelerator: auto
   devices: [0]
@@ -37,7 +37,7 @@ trainer:
 logging:
   tensorboard_enabled: true
   tensorboard_name: tensorboard
-  tensorboard_version: vstrong_nanosam_small
+  tensorboard_version: vstrong_dino_small
   wandb_mode: disabled
   wandb_project: vstrong
   wandb_name:
@@ -45,6 +45,6 @@ logging:
   log_images_every_n_steps: 200
 
 paths:
-  logs_dir: logs
-  checkpoint_dir: logs/checkpoints/vstrong_nanosam_small
-  default_root_dir: logs
+  logs_dir: logs/vstrong
+  checkpoint_dir: logs/vstrong/checkpoints/dino_small
+  default_root_dir: logs/vstrong

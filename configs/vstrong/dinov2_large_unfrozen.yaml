@@ -7,14 +7,15 @@ data:
   sample_margin_px: 10
 
 model:
-  backbone: sam
-  size: small
-  checkpoint: checkpoints/sam_vit_b_01ec64.pth
-  img_size: 1024
+  backbone: dinov2
+  size: large
+  checkpoint: checkpoints/dinov2_vitl14.pth
+  img_size: 518
   embed_dim: 64
   proj_hidden: 256
   temperature: 0.1
   traversability_ema_alpha: 0.999
+  freeze_backbone: false
 
 optimizer:
   lr: 0.001
@@ -22,8 +23,8 @@ optimizer:
 
 trainer:
   seed: 0
-  batch_size: 1
-  num_workers: 0
+  batch_size: 2
+  num_workers: 4
   accelerator: auto
   devices: [0]
   strategy: auto
@@ -37,7 +38,7 @@ trainer:
 logging:
   tensorboard_enabled: true
   tensorboard_name: tensorboard
-  tensorboard_version: vstrong
+  tensorboard_version: vstrong_dinov2_large
   wandb_mode: disabled
   wandb_project: vstrong
   wandb_name:
@@ -45,6 +46,6 @@ logging:
   log_images_every_n_steps: 200
 
 paths:
-  logs_dir: logs
-  checkpoint_dir: logs/checkpoints/vstrong
-  default_root_dir: logs
+  logs_dir: logs/vstrong
+  checkpoint_dir: logs/vstrong/checkpoints/dinov2_large
+  default_root_dir: logs/vstrong

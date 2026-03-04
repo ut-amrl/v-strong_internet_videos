@@ -1,0 +1,52 @@
+data:
+  dataset_dir: data/output_2
+  val_ratio: 0.1
+  points_per_class: 64
+  points_source: mixed
+  neg_top_frac: 0.3
+  sample_margin_px: 10
+
+model:
+  backbone: nanosam
+  size: xlarge  # resnet101
+  checkpoint: checkpoints/distilled_resnet101_samH.pth
+  freeze_backbone: true
+  img_size: 1024
+  embed_dim: 64
+  proj_hidden: 256
+  temperature: 0.1
+  traversability_ema_alpha: 0.999
+
+optimizer:
+  lr: 0.001
+  weight_decay: 0.0001
+  backbone_lr: 0.00005
+
+trainer:
+  seed: 0
+  batch_size: 4
+  num_workers: 4
+  accelerator: auto
+  devices: [0]
+  strategy: auto
+  num_nodes: 1
+  precision: 16-mixed
+  max_epochs: 10
+  limit_train_batches: 1.0
+  limit_val_batches: 1.0
+  fast_dev_run: false
+
+logging:
+  tensorboard_enabled: true
+  tensorboard_name: tensorboard
+  tensorboard_version: vstrong_distilled_resnet101_samH
+  wandb_mode: disabled
+  wandb_project: vstrong
+  wandb_name:
+  log_every_n_steps: 10
+  log_images_every_n_steps: 200
+
+paths:
+  logs_dir: logs/vstrong
+  checkpoint_dir: logs/vstrong/checkpoints/distilled_resnet101_samH
+  default_root_dir: logs/vstrong

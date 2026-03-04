@@ -14,13 +14,20 @@ from torchvision.models import (
     ResNet18_Weights,
     ResNet34_Weights,
     ResNet50_Weights,
+    ResNet101_Weights,
     resnet18,
     resnet34,
     resnet50,
+    resnet101,
 )
 
 
 _OFFICIAL_URLS = {
+    "sam": {
+        "vit_b": "https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth",
+        "vit_l": "https://dl.fbaipublicfiles.com/segment_anything/sam_vit_l_0b3195.pth",
+        "vit_h": "https://dl.fbaipublicfiles.com/segment_anything/sam_vit_h_4b8939.pth",
+    },
     "dino": {
         "dino_vits16": "https://dl.fbaipublicfiles.com/dino/dino_deitsmall16_pretrain/dino_deitsmall16_pretrain.pth",
         "dino_vits8": "https://dl.fbaipublicfiles.com/dino/dino_deitsmall8_300ep_pretrain/dino_deitsmall8_300ep_pretrain.pth",
@@ -36,9 +43,10 @@ _OFFICIAL_URLS = {
 }
 
 _NANOSAM_MODELS = {
-    "resnet18": {"builder": resnet18, "weights": ResNet18_Weights.IMAGENET1K_V1},
-    "resnet34": {"builder": resnet34, "weights": ResNet34_Weights.IMAGENET1K_V1},
-    "resnet50": {"builder": resnet50, "weights": ResNet50_Weights.IMAGENET1K_V2},
+    "resnet18":  {"builder": resnet18,  "weights": ResNet18_Weights.IMAGENET1K_V1},
+    "resnet34":  {"builder": resnet34,  "weights": ResNet34_Weights.IMAGENET1K_V1},
+    "resnet50":  {"builder": resnet50,  "weights": ResNet50_Weights.IMAGENET1K_V2},
+    "resnet101": {"builder": resnet101, "weights": ResNet101_Weights.IMAGENET1K_V2},
 }
 
 
@@ -83,7 +91,7 @@ def _download_nanosam_weights(variant: str, output_path: Path):
 
 def main():
     parser = argparse.ArgumentParser(description="Download local checkpoints for supported backbones.")
-    parser.add_argument("--backbone", type=str, required=True, choices=["nanosam", "dino", "dinov2"])
+    parser.add_argument("--backbone", type=str, required=True, choices=["sam", "nanosam", "dino", "dinov2"])
     parser.add_argument("--size", type=str, default="small", help="small | medium | large")
     parser.add_argument("--variant", type=str, default=None, help="Optional concrete variant override.")
     parser.add_argument("--output", type=str, default=None, help="Output checkpoint path. Default depends on backbone/variant.")
@@ -125,6 +133,14 @@ def main():
         url = _OFFICIAL_URLS[args.backbone].get(variant)
         if url is None:
             raise RuntimeError(f"No official download URL configured for {args.backbone}:{variant}")
+        # For SAM use the canonical filename embedded in the URL.
+        if args.backbone == "sam" and args.output is None:
+            output_path = Path("checkpoints") / Path(url).name
+            if output_path.exists() and not args.force:
+                print(f"Checkpoint already exists: {output_path}")
+                print("Use --force to overwrite.")
+                return
+            output_path.parent.mkdir(parents=True, exist_ok=True)
         print(f"  url     : {url}")
         _download(url=url, output_path=output_path)
     print(f"Saved checkpoint: {output_path}")

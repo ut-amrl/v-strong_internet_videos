@@ -228,6 +228,7 @@ def run_sam_pipeline(
     frame_end: int | None = None,
     max_frames: int | None = None,
     write_viz: bool = True,
+    viz_every_n: int = 1,
 ) -> None:
     """Breadcrumb-prompted SAM masks + pos/neg sampling for all frames in `frames_dir`."""
     from data.track_breadcrumbs import get_sorted_frame_paths, load_breadcrumbs
@@ -318,7 +319,9 @@ def run_sam_pipeline(
             neg_points=neg_points,
         )
 
-        if write_viz:
+        every_n = int(viz_every_n)
+        should_write_viz = bool(write_viz) and every_n > 0 and (every_n == 1 or frame_idx % every_n == 0)
+        if should_write_viz:
             viz = img_bgr.copy()
             overlay = viz.copy()
             overlay[mask01 > 0] = (

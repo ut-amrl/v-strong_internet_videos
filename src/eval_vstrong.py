@@ -41,19 +41,21 @@ def main():
     if not ckpt_path.exists():
         raise RuntimeError(f"Checkpoint not found: {ckpt_path}")
 
+    model = VStrongLit.load_from_checkpoint(str(ckpt_path), strict=False)
+    model.eval()
+    model_img_size = int(getattr(model, "img_size", getattr(model, "sam_img_size", 1024)))
+
     ds = VStrongDataset(
         dataset_dir=str(dataset_dir),
         split=args.split,
         val_ratio=args.val_ratio,
         seed=args.seed,
+        img_size=model_img_size,
         points_per_class=args.points_per_class,
         points_source=args.points_source,
         neg_top_frac=args.neg_top_frac,
         sample_margin_px=args.sample_margin_px,
     )
-
-    model = VStrongLit.load_from_checkpoint(str(ckpt_path), strict=False)
-    model.eval()
 
     if args.device is not None:
         device = torch.device(args.device)
@@ -70,8 +72,8 @@ def main():
     wrote = 0
     for i in range(n):
         s = ds[i]
-        emb = model._encode_images([s.resized_rgb]).to(device)  # 1x256x64x64
-        z_map = model.proj(emb)[0].detach()  # Dx64x64
+        emb = model._encode_images([s.resized_rgb]).to(device)  # 1xCxHfxWf
+        z_map = model.proj(emb)[0].detach()  # DxHfxWf
 
         pos_pts = torch.from_numpy(s.pos_points_resized).to(device)
         viz = model._make_viz(

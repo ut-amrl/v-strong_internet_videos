@@ -48,6 +48,7 @@ def generate_single_video(
     seed: int = 0,
     resume: bool = False,
     write_viz: bool = False,
+    viz_every_n: int = 1,
     center_offset_frac: float = 0.1,
     boundary_thresh: int = 30,
     breadcrumb_max_track_len: int = 20,
@@ -104,6 +105,7 @@ def generate_single_video(
         seed=seed,
         resume=resume,
         write_viz=write_viz,
+        viz_every_n=viz_every_n,
     )
 
     # Write dataset metadata
@@ -168,6 +170,7 @@ def generate_from_config(config_path: str, *, regenerate: bool = False) -> None:
     seed = datagen.get("seed", 0)
     resume = datagen.get("resume", False)
     write_viz = datagen.get("write_viz", False)
+    viz_every_n = datagen.get("viz_every_n", 1)
 
     index_lines = []
 
@@ -246,6 +249,7 @@ def generate_from_config(config_path: str, *, regenerate: bool = False) -> None:
                 seed=seed,
                 resume=resume,
                 write_viz=write_viz,
+                viz_every_n=viz_every_n,
                 center_offset_frac=center_offset_frac,
                 boundary_thresh=boundary_thresh,
                 breadcrumb_max_track_len=breadcrumb_max_track_len,
@@ -492,6 +496,12 @@ def main():
     parser.add_argument("--resume", action="store_true", help="Skip frames whose outputs already exist.")
     parser.add_argument("--seed", type=int, default=0, help="Base RNG seed for deterministic sampling.")
     parser.add_argument("--write_viz", action="store_true", help="Write visualization frames under sam_viz/.")
+    parser.add_argument(
+        "--viz_every_n",
+        type=int,
+        default=1,
+        help="If --write_viz is set, write SAM visualizations only every Nth frame (default: 1 = all).",
+    )
 
     # Point sampling
     parser.add_argument("--num_pos", type=int, default=50)
@@ -529,6 +539,7 @@ def main():
             seed=args.seed,
             resume=args.resume,
             write_viz=args.write_viz,
+            viz_every_n=args.viz_every_n,
             center_offset_frac=args.center_offset_frac,
             boundary_thresh=args.boundary_thresh,
             breadcrumb_max_track_len=args.breadcrumb_max_track_len,

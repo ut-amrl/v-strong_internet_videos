@@ -10,10 +10,8 @@ import numpy as np
 import torch
 
 from data.sam_mask_generator import sample_pos_neg_points
+from data.vstrong_dataset import ResizeLongestSide
 from models.vstrong_lit import VStrongLit
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "third_party" / "segment-anything"))
-from segment_anything.utils.transforms import ResizeLongestSide
 try:
     from tqdm import tqdm
 except Exception:  # pragma: no cover
@@ -193,7 +191,7 @@ def render_video(
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
 
-    transform = ResizeLongestSide(model.sam_img_size)
+    transform = ResizeLongestSide(int(getattr(model, "img_size", getattr(model, "sam_img_size", 1024))))
 
     first_rgb = cv2.imread(str(selected[0]))
     first_rgb = cv2.cvtColor(first_rgb, cv2.COLOR_BGR2RGB)

@@ -4,7 +4,7 @@ name: "kerni_rc_v1"
 output_dataset_dir: "data/kerni_rc_v1"
 
 extraction:
-  every_frame: false
+  every_frame: true
   fps: 5
 
 datagen:
@@ -27,7 +27,8 @@ datagen:
   # Misc
   seed: 0
   resume: false
-  write_viz: false
+  write_viz: true
+  viz_every_n: 10   # save debug viz every Nth frame (1 = all)
 
 videos:
   - id: "kerni_rc_video1"
@@ -39,4 +40,3 @@ videos:
     video_dir: "videos/kerni_rc/video2"
     video_file: "video2.webm"
     chunks_time_file: "videos/kerni_rc/video2/chunks_time.yaml"
-

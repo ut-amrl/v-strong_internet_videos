@@ -252,6 +252,9 @@ class NanoSAMBackbone(BaseBackbone):
         self.img_size = int(img_size)
         self.feature_dim = int(info["embed_dim"])
         self.trainable = bool(trainable)
+        # Distillation targets SAM's 64x64 grid at 1024 input size (stride 16).
+        # Keep NanoSAM's output on the same spatial grid to avoid coarse 32x32 artifacts.
+        self.target_hw = max(1, self.img_size // 16)
 
         if checkpoint is None:
             backbone_model = info["builder"](weights=info["weights"])
@@ -315,6 +318,13 @@ class NanoSAMBackbone(BaseBackbone):
             x = self.layer2(x)
             x = self.layer3(x)
             x = self.layer4(x)
+            if x.shape[-2:] != (self.target_hw, self.target_hw):
+                x = F.interpolate(
+                    x,
+                    size=(self.target_hw, self.target_hw),
+                    mode="bilinear",
+                    align_corners=False,
+                )
             return x
 
 

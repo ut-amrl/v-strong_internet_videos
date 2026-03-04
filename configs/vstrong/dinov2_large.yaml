@@ -29,7 +29,7 @@ trainer:
   strategy: auto
   num_nodes: 1
   precision: 32-true
-  max_epochs: 5
+  max_epochs: 20
   limit_train_batches: 1.0
   limit_val_batches: 1.0
   fast_dev_run: false

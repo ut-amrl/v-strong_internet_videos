@@ -268,11 +268,13 @@ class VStrongLit(pl.LightningModule):
         score_full = F.interpolate(
             score,
             size=(self.img_size, self.img_size),
-            mode="bilinear",
+            mode="bicubic",
             align_corners=False,
         )[0, 0]
         score_up = score_full[:resized_h, :resized_w]
-        score_np = score_up.detach().cpu().numpy()
+        score_np = score_up.detach().cpu().numpy().astype(np.float32, copy=False)
+        # Light smoothing reduces visible grid artifacts from low-res backbone maps.
+        score_np = cv2.GaussianBlur(score_np, ksize=(0, 0), sigmaX=1.0, sigmaY=1.0)
 
         score01 = (score_np - score_np.min()) / max(score_np.max() - score_np.min(), 1e-6)
         heat_u8 = (score01 * 255.0).astype(np.uint8)

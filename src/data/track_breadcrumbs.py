@@ -25,7 +25,6 @@ from typing import Dict, List
 
 import cv2
 import numpy as np
-
 try:
     from tqdm import tqdm
 except Exception:  # pragma: no cover
@@ -224,4 +223,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

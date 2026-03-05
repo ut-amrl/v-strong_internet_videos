@@ -88,6 +88,7 @@ def sample_pos_neg_points(
     neg_top_frac: float = 0.3,
     sample_margin_px: int = 10,
     rng: np.random.Generator | None = None,
+    ignore_mask: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Sample positive and negative (x, y) points from a binary mask.
 
@@ -96,6 +97,8 @@ def sample_pos_neg_points(
     - Negatives are sampled from outside a *dilated* mask (margin away from boundary),
       and restricted to the bottom portion of the image by excluding the top
       `neg_top_frac` fraction (to avoid trivial sky negatives).
+    - If `ignore_mask` is provided, neither positive nor negative points will be
+      sampled in those pixels (useful for ego-vehicle masks).
 
     Returns best-effort samples (can be fewer than requested if candidates are scarce).
     """
@@ -112,24 +115,38 @@ def sample_pos_neg_points(
         pos_u8 = cv2.erode(mask_u8, kernel, iterations=1)
         neg_block_u8 = cv2.dilate(mask_u8, kernel, iterations=1)
     else:
-        pos_u8 = mask_u8
-        neg_block_u8 = mask_u8
+        pos_u8 = mask_u8.copy()
+        neg_block_u8 = mask_u8.copy()
+
+    # Create candiate masks
+    pos_cand = pos_u8 > 0
+    neg_cand = neg_block_u8 == 0
+    
+    # Restrict negatives to bottom portion
+    neg_top = int(h * float(neg_top_frac))
+    neg_cand[:neg_top, :] = False
+
+    # Apply ignore mask
+    if ignore_mask is not None:
+        pos_cand[ignore_mask] = False
+        neg_cand[ignore_mask] = False
 
     # Positives
-    pos_points = _sample_pixels(pos_u8 > 0, int(num_pos), rng)
+    pos_points = _sample_pixels(pos_cand, int(num_pos), rng)
     if len(pos_points) == 0 and kernel is not None:
-        pos_points = _sample_pixels(mask_u8 > 0, int(num_pos), rng)
+        fallback_pos_cand = mask_u8 > 0
+        if ignore_mask is not None:
+            fallback_pos_cand[ignore_mask] = False
+        pos_points = _sample_pixels(fallback_pos_cand, int(num_pos), rng)
 
-    # Negatives (exclude top region)
-    neg_top = int(h * float(neg_top_frac))
-    neg_mask_margin = (neg_block_u8 == 0)
-    neg_mask_margin[:neg_top, :] = False
-    neg_points = _sample_pixels(neg_mask_margin, int(num_neg), rng)
-
+    # Negatives
+    neg_points = _sample_pixels(neg_cand, int(num_neg), rng)
     if len(neg_points) == 0 and kernel is not None:
-        neg_mask_raw = (mask_u8 == 0)
-        neg_mask_raw[:neg_top, :] = False
-        neg_points = _sample_pixels(neg_mask_raw, int(num_neg), rng)
+        fallback_neg_cand = mask_u8 == 0
+        fallback_neg_cand[:neg_top, :] = False
+        if ignore_mask is not None:
+            fallback_neg_cand[ignore_mask] = False
+        neg_points = _sample_pixels(fallback_neg_cand, int(num_neg), rng)
 
     return pos_points, neg_points
 

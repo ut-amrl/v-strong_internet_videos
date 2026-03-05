@@ -188,6 +188,7 @@ def main(argv: list[str] | None = None):
         points_source=str(data_cfg.get("points_source", legacy_dataset_cfg.get("points_source", "mixed"))),
         neg_top_frac=float(data_cfg.get("neg_top_frac", legacy_dataset_cfg.get("neg_top_frac", 0.3))),
         sample_margin_px=int(data_cfg.get("sample_margin_px", legacy_dataset_cfg.get("sample_margin_px", 10))),
+        ignore_mask_path=data_cfg.get("ignore_mask_path", None),
     )
     train_ds = VStrongDataset(split="train", **ds_kwargs)
     val_ds = VStrongDataset(split="val", **ds_kwargs)

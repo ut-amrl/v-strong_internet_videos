@@ -269,7 +269,7 @@ class VStrongLit(pl.LightningModule):
             score,
             size=(self.img_size, self.img_size),
             mode="bicubic",
-            align_corners=False,
+            align_corners=True,
         )[0, 0]
         score_up = score_full[:resized_h, :resized_w]
         score_np = score_up.detach().cpu().numpy().astype(np.float32, copy=False)

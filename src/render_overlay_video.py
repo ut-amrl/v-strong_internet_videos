@@ -10,7 +10,7 @@ import numpy as np
 import torch
 
 from data.sam_mask_generator import sample_pos_neg_points
-from data.vstrong_dataset import ResizeLongestSide
+from data.vstrong_dataset import ResizeSquare
 from models.vstrong_lit import VStrongLit
 try:
     from tqdm import tqdm
@@ -191,7 +191,7 @@ def render_video(
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
 
-    transform = ResizeLongestSide(int(getattr(model, "img_size", getattr(model, "sam_img_size", 1024))))
+    transform = ResizeSquare(int(getattr(model, "img_size", getattr(model, "sam_img_size", 1024))))
 
     first_rgb = cv2.imread(str(selected[0]))
     first_rgb = cv2.cvtColor(first_rgb, cv2.COLOR_BGR2RGB)

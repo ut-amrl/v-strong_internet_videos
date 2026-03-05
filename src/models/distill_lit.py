@@ -132,12 +132,7 @@ class ResNetStudentEncoder(nn.Module):
                 / 255.0
             )
             t = (t - self.pixel_mean) / self.pixel_std
-            padded = torch.zeros(
-                (3, self.img_size, self.img_size), dtype=t.dtype, device=device
-            )
-            _, h, w = t.shape
-            padded[:, :h, :w] = t
-            tensors.append(padded)
+            tensors.append(t)
         return torch.stack(tensors, dim=0)  # (B, 3, img_size, img_size)
 
     def forward_tensor(self, x: torch.Tensor) -> torch.Tensor:
@@ -291,14 +286,15 @@ class DistillLit(pl.LightningModule):
     # ------------------------------------------------------------------
     def _distill_loss(
         self, student_feat: torch.Tensor, teacher_feat: torch.Tensor
-    ) -> torch.Tensor:
-        """Pixel-wise MSE + (1 − cosine-similarity) on flattened spatial dims."""
-        mse = F.mse_loss(student_feat, teacher_feat)
-        # Cosine similarity per spatial location — shape (B, 64*64).
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Pixel-wise MSE + (1 − cosine-similarity) on valid spatial dims."""
         b, c, h, w = student_feat.shape
-        s_flat = student_feat.permute(0, 2, 3, 1).reshape(b * h * w, c)
-        t_flat = teacher_feat.permute(0, 2, 3, 1).reshape(b * h * w, c)
-        cos_sim = F.cosine_similarity(s_flat, t_flat, dim=1).mean()
+        
+        s_valid = student_feat.view(-1, c)
+        t_valid = teacher_feat.view(-1, c)
+        
+        mse = F.mse_loss(s_valid, t_valid)
+        cos_sim = F.cosine_similarity(s_valid, t_valid, dim=1).mean()
         loss = self.lambda_mse * mse + self.lambda_cos * (1.0 - cos_sim)
         return loss, mse, cos_sim
 

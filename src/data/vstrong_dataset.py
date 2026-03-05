@@ -17,17 +17,30 @@ import cv2
 import numpy as np
 from torch.utils.data import Dataset
 
-_third_party_sam = str(Path(__file__).resolve().parents[2] / "third_party" / "segment-anything")
-if _third_party_sam not in sys.path:
-    sys.path.insert(0, _third_party_sam)
-from segment_anything.utils.transforms import ResizeLongestSide
-
 from data.sam_mask_generator import sample_pos_neg_points
+
+
+class ResizeSquare:
+    """Resize image to a square of target_length x target_length and map coordinates."""
+
+    def __init__(self, target_length: int):
+        self.target_length = int(target_length)
+
+    def apply_image(self, image: np.ndarray) -> np.ndarray:
+        return cv2.resize(image, (self.target_length, self.target_length), interpolation=cv2.INTER_LINEAR)
+
+    def apply_coords(self, coords: np.ndarray, original_size: tuple[int, int]) -> np.ndarray:
+        # coords are Nx2 (x, y)
+        old_h, old_w = original_size
+        new_coords = coords.astype(np.float32, copy=True)
+        new_coords[:, 0] = new_coords[:, 0] * (self.target_length / old_w)
+        new_coords[:, 1] = new_coords[:, 1] * (self.target_length / old_h)
+        return new_coords
 
 
 @dataclass
 class VStrongSample:
-    resized_rgb: np.ndarray       # HxWx3 uint8 (after ResizeLongestSide)
+    resized_rgb: np.ndarray       # HxWx3 uint8 (after ResizeSquare)
     pos_points_resized: np.ndarray  # (K,2) float32 in resized coords
     neg_points_resized: np.ndarray  # (K,2) float32 in resized coords
     frame_idx: int
@@ -52,7 +65,7 @@ class VStrongDataset(Dataset):
     seed : int
         Random seed for reproducible splits.
     sam_img_size : int
-        Target size for ResizeLongestSide (default 1024).
+        Target size for ResizeSquare (default 1024).
     points_per_class : int
         Fixed number of pos/neg points per sample.
     points_source : str
@@ -75,6 +88,7 @@ class VStrongDataset(Dataset):
         points_source: str = "mixed",
         neg_top_frac: float = 0.3,
         sample_margin_px: int = 10,
+        ignore_mask_path: str | None = None,
     ):
         if isinstance(dataset_dir, (list, tuple)):
             dataset_dirs = [Path(d) for d in dataset_dir if str(d).strip()]
@@ -94,7 +108,14 @@ class VStrongDataset(Dataset):
         self.points_source = points_source
         self.neg_top_frac = neg_top_frac
         self.sample_margin_px = sample_margin_px
-        self.transform = ResizeLongestSide(self.sam_img_size)
+        self.transform = ResizeSquare(self.sam_img_size)
+        
+        self.ignore_mask = None
+        if ignore_mask_path is not None and Path(ignore_mask_path).exists():
+            import cv2
+            mask = cv2.imread(str(ignore_mask_path), cv2.IMREAD_GRAYSCALE)
+            if mask is not None:
+                self.ignore_mask = mask > 0
 
         self.samples = self._discover_samples()
 
@@ -139,12 +160,19 @@ class VStrongDataset(Dataset):
                 frame_path = root / entry["frame_path"]
                 mask_path = root / entry.get("mask_path", "")
                 points_path = root / entry.get("points_path", "")
+                
+                # Check for chunk-local ignore mask: look in the same parent dir as `frames`
+                # entry["frame_path"] is usually "frames/000123.jpg" or "chunkX/frames/000123.jpg"
+                chunk_root = frame_path.parent.parent
+                ignore_mask_path = chunk_root / "mask.png"
+
                 if frame_path.exists():
                     frame_idx = entry.get("frame_idx", 0)
                     samples.append({
                         "frame_path": frame_path,
                         "mask_path": mask_path if mask_path.exists() else None,
                         "points_path": points_path if points_path.exists() else None,
+                        "ignore_mask_path": ignore_mask_path if ignore_mask_path.exists() else None,
                         "frame_idx": frame_idx,
                         "chunk_id": entry.get("chunk_id", ""),
                         "seed_key": self._stable_seed_from_path(frame_path),
@@ -157,6 +185,7 @@ class VStrongDataset(Dataset):
         frames_dir = root / "frames"
         masks_dir = root / "masks"
         points_dir = root / "pos_neg_points"
+        ignore_mask_path = root / "mask.png"
 
         if not frames_dir.exists():
             raise RuntimeError(f"No frames/ dir found in {root}")
@@ -174,6 +203,7 @@ class VStrongDataset(Dataset):
                 "frame_path": fp,
                 "mask_path": mask_path if mask_path.exists() else None,
                 "points_path": pts_path if pts_path.exists() else None,
+                "ignore_mask_path": ignore_mask_path if ignore_mask_path.exists() else None,
                 "frame_idx": idx,
                 "chunk_id": "",
                 "seed_key": self._stable_seed_from_path(fp),
@@ -204,12 +234,39 @@ class VStrongDataset(Dataset):
             saved_pos = pts.get("pos_points", saved_pos).astype(np.float32)
             saved_neg = pts.get("neg_points", saved_neg).astype(np.float32)
 
+        # Apply ignore mask if found for this chunk
+        curr_mask = None
+        if s.get("ignore_mask_path") is not None:
+            # Load dynamically
+            ign_bgr = cv2.imread(str(s["ignore_mask_path"]), cv2.IMREAD_GRAYSCALE)
+            if ign_bgr is not None:
+                ign_mask_bool = ign_bgr > 0
+                if ign_mask_bool.shape != (h_orig, w_orig):
+                    curr_mask = cv2.resize(ign_mask_bool.astype(np.uint8), (w_orig, h_orig), interpolation=cv2.INTER_NEAREST) > 0
+                else:
+                    curr_mask = ign_mask_bool
+
+                if len(saved_pos) > 0:
+                    pos_ix = np.clip(saved_pos[:, 0].astype(int), 0, w_orig - 1)
+                    pos_iy = np.clip(saved_pos[:, 1].astype(int), 0, h_orig - 1)
+                    valid_pos = ~curr_mask[pos_iy, pos_ix]
+                    saved_pos = saved_pos[valid_pos]
+
+                if len(saved_neg) > 0:
+                    neg_ix = np.clip(saved_neg[:, 0].astype(int), 0, w_orig - 1)
+                    neg_iy = np.clip(saved_neg[:, 1].astype(int), 0, h_orig - 1)
+                    valid_neg = ~curr_mask[neg_iy, neg_ix]
+                    saved_neg = saved_neg[valid_neg]
+
         # Load mask
         mask01 = None
         if s["mask_path"] is not None:
             mask_u8 = cv2.imread(str(s["mask_path"]), cv2.IMREAD_GRAYSCALE)
             if mask_u8 is not None:
                 mask01 = (mask_u8 > 0).astype(np.uint8)
+                if curr_mask is not None:
+                    # Exclude the ignore region from SAM traversability
+                    mask01[curr_mask] = 0
 
         # Get pos/neg points based on source strategy
         k = self.points_per_class
@@ -224,6 +281,7 @@ class VStrongDataset(Dataset):
                 neg_top_frac=self.neg_top_frac,
                 sample_margin_px=self.sample_margin_px,
                 rng=rng,
+                ignore_mask=curr_mask,
             )
         else:  # mixed
             pos_xy = saved_pos.copy()
@@ -237,6 +295,7 @@ class VStrongDataset(Dataset):
                         neg_top_frac=self.neg_top_frac,
                         sample_margin_px=self.sample_margin_px,
                         rng=rng,
+                        ignore_mask=curr_mask,
                     )
                     if len(extra_pos) > 0:
                         pos_xy = np.concatenate([pos_xy, extra_pos], axis=0)
@@ -248,6 +307,7 @@ class VStrongDataset(Dataset):
                         neg_top_frac=self.neg_top_frac,
                         sample_margin_px=self.sample_margin_px,
                         rng=rng,
+                        ignore_mask=curr_mask,
                     )
                     if len(extra_neg) > 0:
                         neg_xy = np.concatenate([neg_xy, extra_neg], axis=0)

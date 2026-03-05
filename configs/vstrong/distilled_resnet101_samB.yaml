@@ -1,42 +1,42 @@
 data:
-  dataset_dir: data/output_2
+  dataset_dir: data/kerni_rc_v1
   val_ratio: 0.1
   points_per_class: 64
   points_source: mixed
   neg_top_frac: 0.3
   sample_margin_px: 10
 model:
-  backbone: sam
-  size: small
-  checkpoint: checkpoints/sam_vit_b_01ec64.pth
-  img_size: 1024
+  backbone: nanosam
+  size: xlarge
+  checkpoint: checkpoints/distilled_resnet101_samB.pth
   freeze_backbone: false
+  img_size: 1024
   embed_dim: 64
   proj_hidden: 256
   temperature: 0.1
   traversability_ema_alpha: 0.999
 optimizer:
   lr: 0.001
-  backbone_lr: 5.0e-05
   weight_decay: 0.0001
+  backbone_lr: 5.0e-05
 trainer:
   seed: 0
-  batch_size: 1
-  num_workers: 0
+  batch_size: 10
+  num_workers: 16
   accelerator: auto
   devices:
   - 0
   strategy: auto
   num_nodes: 1
-  precision: 32-true
-  max_epochs: 5
+  precision: 16-mixed
+  max_epochs: 20
   limit_train_batches: 1.0
   limit_val_batches: 1.0
   fast_dev_run: false
 logging:
   tensorboard_enabled: true
   tensorboard_name: tensorboard
-  tensorboard_version: vstrong_sam_small_unfrozen
+  tensorboard_version: vstrong_distilled_resnet101_samB
   wandb_mode: disabled
   wandb_project: vstrong
   wandb_name: null
@@ -44,5 +44,5 @@ logging:
   log_images_every_n_steps: 200
 paths:
   logs_dir: logs/vstrong
-  checkpoint_dir: logs/vstrong/checkpoints/sam_small_unfrozen
+  checkpoint_dir: logs/vstrong/checkpoints/distilled_resnet101_samB
   default_root_dir: logs/vstrong

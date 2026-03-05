@@ -54,8 +54,19 @@ def main(argv: list[str] | None = None):
 
     # ── Datasets ────────────────────────────────────────────────────────────
     img_size = int(teacher_cfg.get("img_size", 1024))
+
+    # Support: dataset_dir (single path), dataset_dir (list), or dataset_dirs (list)
+    dataset_dirs_val = data_cfg.get("dataset_dirs")
+    dataset_dir_val  = data_cfg.get("dataset_dir")
+    if dataset_dirs_val is None and isinstance(dataset_dir_val, list):
+        dataset_dirs_val = dataset_dir_val
+    if dataset_dirs_val is not None:
+        resolved_dataset_dir = [str(p) for p in dataset_dirs_val if str(p).strip()]
+    else:
+        resolved_dataset_dir = str(dataset_dir_val)
+
     ds_kwargs = dict(
-        dataset_dir=data_cfg["dataset_dir"],
+        dataset_dir=resolved_dataset_dir,
         val_ratio=float(data_cfg.get("val_ratio", 0.1)),
         seed=seed,
         img_size=img_size,

@@ -6,6 +6,7 @@ No point labels are required — we only need the raw images.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import cv2
@@ -13,28 +14,24 @@ import numpy as np
 from torch.utils.data import Dataset
 
 
-class ResizeLongestSide:
-    """Resize image so its longest side equals target_length."""
+class ResizeSquare:
+    """Resize image to a square of target_length x target_length."""
 
     def __init__(self, target_length: int):
         self.target_length = int(target_length)
 
     def apply_image(self, image: np.ndarray) -> np.ndarray:
-        h, w = image.shape[:2]
-        scale = self.target_length / max(h, w)
-        new_h = int(h * scale + 0.5)
-        new_w = int(w * scale + 0.5)
-        return cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+        return cv2.resize(image, (self.target_length, self.target_length), interpolation=cv2.INTER_LINEAR)
 
 
 class DistillDataset(Dataset):
-    """Loads all JPEG frames from ``dataset_dir/frames/`` and returns resized RGB arrays.
+    """Loads all JPEG frames from one or more dataset directories.
 
-    Compatible with the V-STRONG dataset structure. Any frame that can be read
-    is included — point labels are not required.
+    Supports both flat layout (``dataset_dir/frames/*.jpg``) and chunked layout
+    (``dataset_dir/index.jsonl``). Multiple directories can be passed as a list.
 
     Args:
-        dataset_dir: Root directory of a V-STRONG dataset (must have a ``frames/`` sub-dir).
+        dataset_dir: Root directory (or list of directories) of V-STRONG datasets.
         split: ``"train"`` or ``"val"``.
         val_ratio: Fraction of frames held out for validation.
         seed: Shuffling seed for the train/val split.
@@ -43,21 +40,31 @@ class DistillDataset(Dataset):
 
     def __init__(
         self,
-        dataset_dir: str,
+        dataset_dir: str | list[str],
         split: str = "train",
         val_ratio: float = 0.1,
         seed: int = 0,
         img_size: int = 1024,
     ):
-        self.frames_dir = Path(dataset_dir) / "frames"
-        if not self.frames_dir.exists():
-            raise RuntimeError(f"Frames directory not found: {self.frames_dir}")
+        if isinstance(dataset_dir, (list, tuple)):
+            dataset_dirs = [Path(d) for d in dataset_dir if str(d).strip()]
+        else:
+            dataset_dirs = [Path(str(dataset_dir))]
+        if not dataset_dirs:
+            raise RuntimeError("dataset_dir must be a non-empty path or list of paths.")
 
-        self.transform = ResizeLongestSide(img_size)
+        self.transform = ResizeSquare(img_size)
 
-        all_frames = sorted(self.frames_dir.glob("*.jpg"))
+        all_frames: list[Path] = []
+        for root in dataset_dirs:
+            index_file = root / "index.jsonl"
+            if index_file.exists():
+                all_frames.extend(self._collect_from_index(root, index_file))
+            else:
+                all_frames.extend(self._collect_flat(root))
+
         if not all_frames:
-            raise RuntimeError(f"No *.jpg frames found in {self.frames_dir}")
+            raise RuntimeError(f"No *.jpg frames found in: {[str(d) for d in dataset_dirs]}")
 
         rng = np.random.default_rng(seed)
         indices = np.arange(len(all_frames))
@@ -72,6 +79,29 @@ class DistillDataset(Dataset):
             self.entries = [all_frames[i] for i in range(len(all_frames)) if i in val_indices]
         else:
             raise ValueError(f"Invalid split={split!r}. Expected 'train' or 'val'.")
+
+    @staticmethod
+    def _collect_from_index(root: Path, index_file: Path) -> list[Path]:
+        """Collect frame paths from a chunked index.jsonl."""
+        frames = []
+        with open(index_file) as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                entry = json.loads(line)
+                frame_path = root / entry["frame_path"]
+                if frame_path.exists():
+                    frames.append(frame_path)
+        return frames
+
+    @staticmethod
+    def _collect_flat(root: Path) -> list[Path]:
+        """Collect frame paths from a flat frames/ directory."""
+        frames_dir = root / "frames"
+        if not frames_dir.exists():
+            raise RuntimeError(f"No frames/ dir found in {root}")
+        return sorted(frames_dir.glob("*.jpg"))
 
     def __len__(self) -> int:
         return len(self.entries)

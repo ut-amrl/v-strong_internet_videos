@@ -9,6 +9,7 @@ from pathlib import Path
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 
 _SIZE_ALIASES = {
@@ -307,10 +308,7 @@ class NanoSAMBackbone(BaseBackbone):
             for rgb in resized_rgbs:
                 tensor = torch.from_numpy(rgb).to(device=device).permute(2, 0, 1).to(torch.float32) / 255.0
                 tensor = (tensor - self.pixel_mean) / self.pixel_std
-                padded = torch.zeros((3, self.img_size, self.img_size), dtype=tensor.dtype, device=device)
-                _, h, w = tensor.shape
-                padded[:, :h, :w] = tensor
-                inputs.append(padded)
+                inputs.append(tensor)
 
             batch = torch.stack(inputs, dim=0)
             x = self.stem(batch)
@@ -359,10 +357,7 @@ class DINOBackbone(BaseBackbone):
             for rgb in resized_rgbs:
                 tensor = torch.from_numpy(rgb).to(device=device).permute(2, 0, 1).to(torch.float32) / 255.0
                 tensor = (tensor - self.pixel_mean) / self.pixel_std
-                padded = torch.zeros((3, self.img_size, self.img_size), dtype=tensor.dtype, device=device)
-                _, h, w = tensor.shape
-                padded[:, :h, :w] = tensor
-                inputs.append(padded)
+                inputs.append(tensor)
 
             batch = torch.stack(inputs, dim=0)
             features = self.model.get_intermediate_layers(batch, n=1)[0]
@@ -403,10 +398,7 @@ class DINOv2Backbone(BaseBackbone):
             for rgb in resized_rgbs:
                 tensor = torch.from_numpy(rgb).to(device=device).permute(2, 0, 1).to(torch.float32) / 255.0
                 tensor = (tensor - self.pixel_mean) / self.pixel_std
-                padded = torch.zeros((3, self.img_size, self.img_size), dtype=tensor.dtype, device=device)
-                _, h, w = tensor.shape
-                padded[:, :h, :w] = tensor
-                inputs.append(padded)
+                inputs.append(tensor)
 
             batch = torch.stack(inputs, dim=0)
             return self.model.get_intermediate_layers(batch, n=1, reshape=True)[0]

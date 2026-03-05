@@ -7,7 +7,7 @@ import numpy as np
 import torch
 
 from data.extract_frames import extract_frames
-from data.vstrong_dataset import ResizeLongestSide
+from data.vstrong_dataset import ResizeSquare
 from models.vstrong_lit import VStrongLit
 
 try:
@@ -86,7 +86,7 @@ def main():
     model.eval()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
-    transform = ResizeLongestSide(int(getattr(model, "img_size", getattr(model, "sam_img_size", 1024))))
+    transform = ResizeSquare(int(getattr(model, "img_size", getattr(model, "sam_img_size", 1024))))
     if not bool(model.traversability_initialized.item()):
         raise RuntimeError(
             "Checkpoint does not contain an initialized traversability vector. "

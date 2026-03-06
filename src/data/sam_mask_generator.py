@@ -227,6 +227,55 @@ def _subsample_points(points_xy: np.ndarray, max_points: int, rng: np.random.Gen
     return points_xy[idxs]
 
 
+def _postprocess_and_save(
+    mask01: np.ndarray,
+    pos_points: np.ndarray,
+    neg_points: np.ndarray,
+    bc_pts: np.ndarray,
+    img_bgr: np.ndarray,
+    frame_idx: int,
+    out_mask_path: Path,
+    out_points_path: Path,
+    out_viz_path: Path,
+    write_viz: bool,
+    viz_every_n: int,
+) -> None:
+    """CPU-only post-processing: write mask, points, and optional viz to disk."""
+    cv2.imwrite(str(out_mask_path), (mask01 * 255).astype(np.uint8, copy=False))
+    np.savez_compressed(
+        str(out_points_path),
+        pos_points=pos_points,
+        neg_points=neg_points,
+    )
+
+    every_n = int(viz_every_n)
+    should_write_viz = bool(write_viz) and every_n > 0 and (every_n == 1 or frame_idx % every_n == 0)
+    if should_write_viz:
+        viz = img_bgr.copy()
+        overlay = viz.copy()
+        overlay[mask01 > 0] = (
+            overlay[mask01 > 0] * 0.5 + np.array([200, 100, 0]) * 0.5
+        ).astype(np.uint8)
+        viz = overlay
+
+        for bx, by in bc_pts[:, :2]:
+            cv2.circle(viz, (int(bx), int(by)), 4, (255, 255, 255), -1)
+        for px, py in pos_points:
+            cv2.circle(viz, (int(px), int(py)), 6, (0, 255, 0), -1)
+        for nx, ny in neg_points:
+            cv2.circle(viz, (int(nx), int(ny)), 6, (0, 0, 255), -1)
+        cv2.putText(
+            viz,
+            f"Frame {frame_idx} | mask {int(mask01.sum())}px | +{len(pos_points)} -{len(neg_points)}",
+            (20, 60),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            1.2,
+            (255, 255, 255),
+            3,
+        )
+        cv2.imwrite(str(out_viz_path), viz)
+
+
 def run_sam_pipeline(
     *,
     frames_dir: str,
@@ -246,8 +295,15 @@ def run_sam_pipeline(
     max_frames: int | None = None,
     write_viz: bool = True,
     viz_every_n: int = 1,
+    num_workers: int = 4,
 ) -> None:
-    """Breadcrumb-prompted SAM masks + pos/neg sampling for all frames in `frames_dir`."""
+    """Breadcrumb-prompted SAM masks + pos/neg sampling for all frames in `frames_dir`.
+
+    When ``num_workers > 0``, CPU-bound post-processing (pos/neg sampling,
+    file writes, visualization) is offloaded to a thread pool so that the next
+    GPU SAM inference can start immediately.
+    """
+    from concurrent.futures import ThreadPoolExecutor
     from data.track_breadcrumbs import get_sorted_frame_paths, load_breadcrumbs
 
     out_dir = Path(output_dir)
@@ -274,6 +330,9 @@ def run_sam_pipeline(
         from tqdm import tqdm
     except Exception:  # pragma: no cover
         tqdm = None
+
+    pool = ThreadPoolExecutor(max_workers=max(1, int(num_workers))) if num_workers > 0 else None
+    futures = []
 
     iterable = tqdm(frame_paths, desc="SAM masks + pos/neg", unit="frame") if tqdm is not None else frame_paths
     for frame_path in iterable:
@@ -307,10 +366,11 @@ def run_sam_pipeline(
                 pos_points = np.empty((0, 2), dtype=np.float32)
                 neg_points = np.empty((0, 2), dtype=np.float32)
             else:
+                # --- GPU: SAM inference ---
                 predictor.set_image(img_rgb)
 
                 point_coords = prompt_pts.astype(np.float32, copy=False)
-                point_labels = np.ones(len(point_coords), dtype=np.int32)  # all foreground
+                point_labels = np.ones(len(point_coords), dtype=np.int32)
 
                 masks_out, scores, _ = predictor.predict(
                     point_coords=point_coords,
@@ -318,8 +378,9 @@ def run_sam_pipeline(
                     multimask_output=True,
                 )
                 best_idx = int(np.argmax(scores))
-                mask01 = masks_out[best_idx].astype(np.uint8)  # (H, W) 0/1
+                mask01 = masks_out[best_idx].astype(np.uint8)
 
+                # --- CPU: pos/neg sampling (can overlap with next GPU step) ---
                 pos_points, neg_points = sample_pos_neg_points(
                     mask01=mask01,
                     num_pos=int(num_pos),
@@ -329,39 +390,27 @@ def run_sam_pipeline(
                     rng=rng,
                 )
 
-        cv2.imwrite(str(out_mask_path), (mask01 * 255).astype(np.uint8, copy=False))
-        np.savez_compressed(
-            str(out_points_path),
-            pos_points=pos_points,
-            neg_points=neg_points,
-        )
-
-        every_n = int(viz_every_n)
-        should_write_viz = bool(write_viz) and every_n > 0 and (every_n == 1 or frame_idx % every_n == 0)
-        if should_write_viz:
-            viz = img_bgr.copy()
-            overlay = viz.copy()
-            overlay[mask01 > 0] = (
-                overlay[mask01 > 0] * 0.5 + np.array([200, 100, 0]) * 0.5
-            ).astype(np.uint8)
-            viz = overlay
-
-            for bx, by in bc_pts[:, :2]:
-                cv2.circle(viz, (int(bx), int(by)), 4, (255, 255, 255), -1)
-            for px, py in pos_points:
-                cv2.circle(viz, (int(px), int(py)), 6, (0, 255, 0), -1)
-            for nx, ny in neg_points:
-                cv2.circle(viz, (int(nx), int(ny)), 6, (0, 0, 255), -1)
-            cv2.putText(
-                viz,
-                f"Frame {frame_idx} | mask {int(mask01.sum())}px | +{len(pos_points)} -{len(neg_points)}",
-                (20, 60),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                1.2,
-                (255, 255, 255),
-                3,
+        # --- Offload file writes + viz to thread pool ---
+        if pool is not None:
+            fut = pool.submit(
+                _postprocess_and_save,
+                mask01, pos_points, neg_points, bc_pts, img_bgr,
+                frame_idx, out_mask_path, out_points_path, out_viz_path,
+                write_viz, viz_every_n,
             )
-            cv2.imwrite(str(out_viz_path), viz)
+            futures.append(fut)
+        else:
+            _postprocess_and_save(
+                mask01, pos_points, neg_points, bc_pts, img_bgr,
+                frame_idx, out_mask_path, out_points_path, out_viz_path,
+                write_viz, viz_every_n,
+            )
 
         if tqdm is not None and hasattr(iterable, "set_postfix_str"):
             iterable.set_postfix_str(f"dev={device}")
+
+    # Wait for all background writes to finish
+    if pool is not None:
+        for fut in futures:
+            fut.result()  # re-raises any exception
+        pool.shutdown(wait=True)

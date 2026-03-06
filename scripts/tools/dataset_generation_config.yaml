@@ -1,7 +1,7 @@
 version: 1
-name: "kerni_rc_v1"
+name: "kerni_rc_v2"
 
-output_dataset_dir: "data/kerni_rc_v1"
+output_dataset_dir: "data/kerni_rc_v2"
 
 extraction:
   every_frame: true
@@ -9,26 +9,27 @@ extraction:
 
 datagen:
   # Breadcrumbs (LK reverse chained tracking)
-  center_offset_frac: 0.1
+  center_offset_frac: 0.15
   boundary_thresh: 30
-  breadcrumb_max_track_len: 20
+  breadcrumb_max_track_len: 40
 
   # SAM (breadcrumb-prompted)
-  sam_ckpt: "checkpoints/sam_vit_b_01ec64.pth"
-  sam_type: "vit_b"
-  prompt_max_points: 32
+  sam_ckpt: "checkpoints/sam_vit_h_4b8939.pth"
+  sam_type: "vit_h"
+  prompt_max_points: 40
 
   # Pos/neg sampling
-  num_pos: 50
-  num_neg: 50
-  neg_top_frac: 0.3
+  num_pos: 200
+  num_neg: 200
+  neg_top_frac: 0.0
   sample_margin_px: 10
 
   # Misc
   seed: 0
   resume: false
   write_viz: true
-  viz_every_n: 10   # save debug viz every Nth frame (1 = all)
+  viz_every_n: 200   # save debug viz every Nth frame (1 = all)
+  num_workers: 2    # thread pool workers for post-processing (0 = sequential)
 
 videos:
   - id: "kerni_rc_video1"

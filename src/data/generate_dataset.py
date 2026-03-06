@@ -52,6 +52,10 @@ def generate_single_video(
     center_offset_frac: float = 0.1,
     boundary_thresh: int = 30,
     breadcrumb_max_track_len: int = 20,
+    tracker_type: str = "lk",
+    cotracker_checkpoint: str = "./external/co-tracker/checkpoints/scaled_online.pth",
+    cotracker_window_len: int = 16,
+    num_workers: int = 4,
 ) -> dict:
     """Generate dataset for a single video (or chunk).
 
@@ -78,15 +82,27 @@ def generate_single_video(
     if meta["total_extracted"] <= 0:
         raise RuntimeError("No frames were extracted; cannot generate dataset.")
 
-    # Step 2: Track breadcrumbs (chained LK, reverse)
-    print("Tracking breadcrumbs (chained LK, reverse)")
+    # Step 2: Track breadcrumbs
     frame_paths = get_sorted_frame_paths(frames_dir)
-    breadcrumbs = track_breadcrumbs_chained(
-        frame_paths,
-        center_offset_frac=center_offset_frac,
-        boundary_thresh=boundary_thresh,
-        max_track_len=breadcrumb_max_track_len,
-    )
+    if tracker_type == "cotracker":
+        print("Tracking breadcrumbs (CoTracker, reverse)")
+        from data.track_breadcrumbs_cotracker import track_breadcrumbs_cotracker
+        breadcrumbs = track_breadcrumbs_cotracker(
+            frame_paths,
+            center_offset_frac=center_offset_frac,
+            boundary_thresh=boundary_thresh,
+            max_track_len=breadcrumb_max_track_len,
+            checkpoint=cotracker_checkpoint,
+            window_len=cotracker_window_len,
+        )
+    else:
+        print("Tracking breadcrumbs (chained LK, reverse)")
+        breadcrumbs = track_breadcrumbs_chained(
+            frame_paths,
+            center_offset_frac=center_offset_frac,
+            boundary_thresh=boundary_thresh,
+            max_track_len=breadcrumb_max_track_len,
+        )
     save_breadcrumbs(breadcrumbs, breadcrumbs_dir)
 
     # Step 3: Breadcrumb-prompted SAM + point sampling
@@ -106,6 +122,7 @@ def generate_single_video(
         resume=resume,
         write_viz=write_viz,
         viz_every_n=viz_every_n,
+        num_workers=num_workers,
     )
 
     # Write dataset metadata
@@ -124,6 +141,7 @@ def generate_single_video(
         "neg_top_frac": float(neg_top_frac),
         "sample_margin_px": int(sample_margin_px),
         "breadcrumbs": {
+            "tracker_type": tracker_type,
             "center_offset_frac": float(center_offset_frac),
             "boundary_thresh": int(boundary_thresh),
             "max_track_len": int(breadcrumb_max_track_len),
@@ -137,7 +155,14 @@ def generate_single_video(
     return dataset_meta
 
 
-def generate_from_config(config_path: str, *, regenerate: bool = False) -> None:
+def generate_from_config(
+    config_path: str,
+    *,
+    regenerate: bool = False,
+    tracker_type_override: str | None = None,
+    cotracker_checkpoint_override: str | None = None,
+    cotracker_window_len_override: int | None = None,
+) -> None:
     """Generate datasets from a YAML config file (chunk-aware).
 
     Config schema documented in .agent/task.md.
@@ -171,6 +196,13 @@ def generate_from_config(config_path: str, *, regenerate: bool = False) -> None:
     resume = datagen.get("resume", False)
     write_viz = datagen.get("write_viz", False)
     viz_every_n = datagen.get("viz_every_n", 1)
+    tracker_type = tracker_type_override or datagen.get("tracker_type", "lk")
+    cotracker_checkpoint = cotracker_checkpoint_override or datagen.get(
+        "cotracker_checkpoint",
+        "./external/co-tracker/checkpoints/scaled_online.pth",
+    )
+    cotracker_window_len = cotracker_window_len_override or datagen.get("cotracker_window_len", 16)
+    num_workers = datagen.get("num_workers", 4)
 
     index_lines = []
 
@@ -253,6 +285,10 @@ def generate_from_config(config_path: str, *, regenerate: bool = False) -> None:
                 center_offset_frac=center_offset_frac,
                 boundary_thresh=boundary_thresh,
                 breadcrumb_max_track_len=breadcrumb_max_track_len,
+                tracker_type=tracker_type,
+                cotracker_checkpoint=cotracker_checkpoint,
+                cotracker_window_len=cotracker_window_len,
+                num_workers=num_workers,
             )
             _add_to_index(index_lines, chunk_id, chunk_out)
 
@@ -514,13 +550,41 @@ def main():
     parser.add_argument("--center_offset_frac", type=float, default=0.1)
     parser.add_argument("--boundary_thresh", type=int, default=30)
 
+    # Parallelism
+    parser.add_argument(
+        "--num_workers", type=int, default=4,
+        help="Thread pool workers for post-processing (mask/points writes + viz). 0 = sequential.",
+    )
+
+    # Tracker selection
+    parser.add_argument(
+        "--tracker_type", type=str, default="lk",
+        choices=["lk", "cotracker"],
+        help="Breadcrumb tracking method: 'lk' (Lucas-Kanade) or 'cotracker'.",
+    )
+    parser.add_argument(
+        "--cotracker_checkpoint", type=str,
+        default="./external/co-tracker/checkpoints/scaled_online.pth",
+        help="Path to CoTracker checkpoint (only used when --tracker_type=cotracker).",
+    )
+    parser.add_argument(
+        "--cotracker_window_len", type=int, default=16,
+        help="CoTracker sliding window length (only used when --tracker_type=cotracker).",
+    )
+
     # Config mode options
     parser.add_argument("--regenerate", action="store_true", help="Regenerate existing chunks.")
 
     args = parser.parse_args()
 
     if args.config:
-        generate_from_config(args.config, regenerate=args.regenerate)
+        generate_from_config(
+            args.config,
+            regenerate=args.regenerate,
+            tracker_type_override=args.tracker_type,
+            cotracker_checkpoint_override=args.cotracker_checkpoint,
+            cotracker_window_len_override=args.cotracker_window_len,
+        )
     elif args.video and args.output:
         generate_single_video(
             video_path=args.video,
@@ -543,6 +607,10 @@ def main():
             center_offset_frac=args.center_offset_frac,
             boundary_thresh=args.boundary_thresh,
             breadcrumb_max_track_len=args.breadcrumb_max_track_len,
+            tracker_type=args.tracker_type,
+            cotracker_checkpoint=args.cotracker_checkpoint,
+            cotracker_window_len=args.cotracker_window_len,
+            num_workers=args.num_workers,
         )
     else:
         parser.error("Provide --video + --output for single-video mode, or --config for config mode.")
